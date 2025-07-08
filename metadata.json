@@ -1,0 +1,6 @@
+{
+  "name": "Circle Grid Display",
+  "description": "A simple React web application that displays a 7 by 6 grid of gray circles using Tailwind CSS for styling.",
+  "requestFramePermissions": [],
+  "prompt": ""
+}
