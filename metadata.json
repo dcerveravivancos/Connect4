@@ -1,6 +1,6 @@
 {
-  "name": "Circle Grid Display",
-  "description": "A simple React web application that displays a 7 by 6 grid of gray circles using Tailwind CSS for styling.",
+  "name": "Connect Four Game",
+  "description": "A classic Connect Four game where two players, Red and Yellow, take turns dropping tokens into a 7x6 grid. The first player to get four of their tokens in a row wins.",
   "requestFramePermissions": [],
   "prompt": ""
 }
