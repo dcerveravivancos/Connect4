@@ -1,11 +1,62 @@
-import React, { useState, useCallback, useMemo } from 'react';
+import React, { useState, useCallback, useMemo, useEffect } from 'react';
+import { initializeApp } from 'firebase/app';
+import { getFirestore, doc, onSnapshot, runTransaction, Firestore } from 'firebase/firestore';
+
+// IMPORTANT: Replace this with your own Firebase project configuration!
+// 1. Go to the Firebase console (https://console.firebase.google.com/).
+// 2. Create a new project.
+// 3. Go to Project Settings -> General tab.
+// 4. Under "Your apps", click the web icon (</>) to create a new web app.
+// 5. Copy the firebaseConfig object and paste it here.
+const firebaseConfig = {
+  apiKey: "YOUR_API_KEY",
+  authDomain: "YOUR_AUTH_DOMAIN",
+  projectId: "YOUR_PROJECT_ID",
+  storageBucket: "YOUR_STORAGE_BUCKET",
+  messagingSenderId: "YOUR_MESSAGING_SENDER_ID",
+  appId: "YOUR_APP_ID"
+};
+
+
+// Initialize Firebase and Firestore
+let db: Firestore | undefined;
+const isFirebaseConfigured = firebaseConfig.apiKey && firebaseConfig.apiKey !== "YOUR_API_KEY";
+
+if (isFirebaseConfigured) {
+    try {
+        const app = initializeApp(firebaseConfig);
+        db = getFirestore(app);
+    } catch (error) {
+        console.error("Firebase initialization failed:", error);
+    }
+}
+
 
 const ROWS = 6;
 const COLS = 7;
 
 type Player = 1 | 2;
 type CellState = 0 | Player;
-type BoardState = CellState[][];
+// Firestore doesn't support nested arrays. Use a map of arrays instead.
+type BoardState = { [row: number]: CellState[] };
+
+interface GameState {
+  board: BoardState;
+  currentPlayer: Player;
+  winner: Player | 'draw' | null;
+}
+
+const createInitialGameState = (): GameState => {
+  const board: BoardState = {};
+  for (let r = 0; r < ROWS; r++) {
+    board[r] = Array(COLS).fill(0);
+  }
+  return {
+    board,
+    currentPlayer: 1,
+    winner: null,
+  };
+};
 
 // Helper function to check for a winner
 const checkWinner = (board: BoardState): Player | 'draw' | null => {
@@ -49,8 +100,7 @@ const checkWinner = (board: BoardState): Player | 'draw' | null => {
     }
   }
   
-  // Check for draw
-  if (board.flat().every(cell => cell !== 0)) {
+  if (Object.values(board).flat().every(cell => cell !== 0)) {
     return 'draw';
   }
 
@@ -63,8 +113,7 @@ interface CircleProps {
 
 const Circle: React.FC<CircleProps> = React.memo(({ value }) => {
   const baseClasses = "w-12 h-12 md:w-16 md:h-16 rounded-full shadow-inner transition-all duration-300";
-  
-  let colorClass = "bg-gray-700"; // Empty slot, looks like a hole
+  let colorClass = "bg-gray-700";
   
   if (value === 1) {
     colorClass = "bg-red-500 shadow-lg shadow-red-900/40";
@@ -76,39 +125,106 @@ const Circle: React.FC<CircleProps> = React.memo(({ value }) => {
 });
 Circle.displayName = 'Circle';
 
+
 const App: React.FC = () => {
-  const createInitialBoard = (): BoardState => Array.from({ length: ROWS }, () => Array(COLS).fill(0));
-  
-  const [board, setBoard] = useState<BoardState>(createInitialBoard());
-  const [currentPlayer, setCurrentPlayer] = useState<Player>(1);
-  const [winner, setWinner] = useState<Player | 'draw' | null>(null);
+  const [gameState, setGameState] = useState<GameState>(createInitialGameState());
+  const [connectionStatus, setConnectionStatus] = useState<'connecting' | 'live' | 'error'>('connecting');
+  const [isUpdating, setIsUpdating] = useState(false);
 
-  const handleColumnClick = useCallback((colIndex: number) => {
-    if (winner) return;
-
-    for (let r = ROWS - 1; r >= 0; r--) {
-      if (board[r][colIndex] === 0) {
-        const newBoard = board.map(row => [...row]) as BoardState;
-        newBoard[r][colIndex] = currentPlayer;
-        setBoard(newBoard);
-
-        const newWinner = checkWinner(newBoard);
-        if (newWinner) {
-          setWinner(newWinner);
-        } else {
-          setCurrentPlayer(currentPlayer === 1 ? 2 : 1);
-        }
+  useEffect(() => {
+    if (!db) {
+        setConnectionStatus('error');
         return;
-      }
     }
-  }, [board, currentPlayer, winner]);
+    const gameDocRef = doc(db, 'games', 'connect4-live');
 
-  const resetGame = () => {
-    setBoard(createInitialBoard());
-    setCurrentPlayer(1);
-    setWinner(null);
+    const unsubscribe = onSnapshot(gameDocRef, (docSnap) => {
+        if (docSnap.exists()) {
+            setGameState(docSnap.data() as GameState);
+        } else {
+            // Document doesn't exist, create it with the initial state
+            runTransaction(db, async (transaction) => {
+                transaction.set(gameDocRef, createInitialGameState());
+            });
+        }
+        setConnectionStatus('live');
+    }, (error) => {
+        console.error("Firestore connection error:", error);
+        setConnectionStatus('error');
+    });
+
+    return () => unsubscribe();
+  }, []);
+
+  const handleColumnClick = useCallback(async (colIndex: number) => {
+    if (!db || isUpdating || gameState.winner) return;
+
+    setIsUpdating(true);
+    const gameDocRef = doc(db, 'games', 'connect4-live');
+    try {
+        await runTransaction(db, async (transaction) => {
+            const docSnap = await transaction.get(gameDocRef);
+            if (!docSnap.exists()) {
+                throw "Document does not exist!";
+            }
+            
+            const currentState = docSnap.data() as GameState;
+            
+            if (currentState.winner) {
+                return; // Game already won
+            }
+
+            const board = currentState.board;
+            // Find the lowest empty spot in the column
+            let targetRow = -1;
+            for (let r = ROWS - 1; r >= 0; r--) {
+                if (board[r][colIndex] === 0) {
+                    targetRow = r;
+                    break;
+                }
+            }
+            
+            if (targetRow > -1) {
+                // Create a deep copy to modify, as Firestore state is immutable
+                const newBoard = JSON.parse(JSON.stringify(board));
+                newBoard[targetRow][colIndex] = currentState.currentPlayer;
+                
+                const newWinner = checkWinner(newBoard);
+                const nextPlayer = currentState.currentPlayer === 1 ? 2 : 1;
+
+                transaction.update(gameDocRef, { 
+                    board: newBoard, 
+                    winner: newWinner,
+                    currentPlayer: nextPlayer
+                });
+            } else {
+                console.log("Column is full");
+            }
+        });
+    } catch (error) {
+        console.error("Transaction failed: ", error);
+    } finally {
+        setIsUpdating(false);
+    }
+  }, [isUpdating, gameState.winner]);
+
+  const resetGame = async () => {
+    if (!db || isUpdating) return;
+    setIsUpdating(true);
+    const gameDocRef = doc(db, 'games', 'connect4-live');
+    try {
+        await runTransaction(db, async (transaction) => {
+           transaction.set(gameDocRef, createInitialGameState());
+        });
+    } catch (error) {
+        console.error("Reset failed: ", error);
+    } finally {
+        setIsUpdating(false);
+    }
   };
   
+  const { board, currentPlayer, winner } = gameState;
+
   const StatusMessage = useMemo(() => {
     if (winner) {
       if (winner === 'draw') {
@@ -119,12 +235,49 @@ const App: React.FC = () => {
     }
     const playerColor = currentPlayer === 1 ? 'text-red-500' : 'text-yellow-400';
     return <h2 className={`text-3xl font-bold ${playerColor}`}>Player {currentPlayer}'s Turn</h2>;
-
   }, [winner, currentPlayer]);
+
+  const ConnectionStatusIndicator = () => {
+      let color, text;
+      switch (connectionStatus) {
+          case 'live':
+              color = 'text-green-400';
+              text = '● Live';
+              break;
+          case 'error':
+              color = 'text-red-500';
+              text = 'Connection Error';
+              break;
+          case 'connecting':
+          default:
+              color = 'text-yellow-400';
+              text = 'Connecting...';
+      }
+      return <div className={`h-6 text-sm font-semibold ${color}`}>{text}</div>
+  }
+
+  if (!isFirebaseConfigured) {
+    return (
+      <main className="bg-gray-800 min-h-screen w-full flex flex-col items-center justify-center p-4 text-white text-center font-sans">
+        <div className="bg-gray-900/50 p-8 rounded-2xl shadow-2xl border border-red-500/50 backdrop-blur-sm max-w-2xl">
+            <h1 className="text-3xl font-bold text-red-500 mb-4">Configuration Required</h1>
+            <p className="text-lg mb-4 text-gray-300">
+                Your Firebase project has not been configured.
+            </p>
+            <p className="text-gray-400 mb-6">
+                Please open the <code className="bg-gray-700 text-yellow-300 p-1 rounded mx-1">src/App.tsx</code> file and replace the placeholder values in the 
+                <code className="bg-gray-700 text-yellow-300 p-1 rounded mx-1">firebaseConfig</code> object with your actual project keys from the Firebase Console.
+            </p>
+            <p className="text-gray-500 text-sm">You need to create a project, add a Web App, and then copy the generated config object.</p>
+        </div>
+      </main>
+    )
+  }
   
   return (
     <main className="bg-gray-800 min-h-screen w-full flex flex-col items-center justify-center p-4 sm:p-6 lg:p-8 font-sans">
-      <div className="text-center mb-8">
+      <div className="text-center mb-4">
+        <ConnectionStatusIndicator />
         <h1 className="text-4xl sm:text-5xl font-bold text-white tracking-tight">
           Connect Four
         </h1>
@@ -135,12 +288,12 @@ const App: React.FC = () => {
 
       <div className="bg-gray-900/50 p-4 sm:p-6 rounded-2xl shadow-2xl border border-gray-700 backdrop-blur-sm">
         <div className="grid grid-cols-7 gap-3 sm:gap-4">
-          {board.flat().map((value, index) => {
+          {Object.values(board).flat().map((value, index) => {
             const colIndex = index % COLS;
             return (
               <div 
                 key={index} 
-                className="flex items-center justify-center cursor-pointer rounded-full group"
+                className={`flex items-center justify-center rounded-full group ${isUpdating || winner ? 'cursor-not-allowed' : 'cursor-pointer'}`}
                 onClick={() => handleColumnClick(colIndex)}
                 aria-label={`Drop token in column ${colIndex + 1}`}
               >
@@ -157,7 +310,8 @@ const App: React.FC = () => {
         {winner && (
             <button
               onClick={resetGame}
-              className="px-8 py-3 bg-indigo-600 text-white font-semibold rounded-lg shadow-md hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:ring-opacity-75 transition-all duration-200 transform hover:scale-105"
+              disabled={isUpdating}
+              className="px-8 py-3 bg-indigo-600 text-white font-semibold rounded-lg shadow-md hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:ring-opacity-75 transition-all duration-200 transform hover:scale-105 disabled:bg-indigo-400 disabled:cursor-not-allowed"
             >
               Play Again
             </button>
@@ -166,7 +320,7 @@ const App: React.FC = () => {
 
       <footer className="mt-8 text-center">
           <p className="text-gray-500 text-sm">
-              Built with React & Tailwind CSS.
+              Built with React, Tailwind CSS, and Firebase.
           </p>
       </footer>
     </main>
