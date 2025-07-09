@@ -2,20 +2,20 @@ import React, { useState, useCallback, useMemo, useEffect } from 'react';
 import { initializeApp } from 'firebase/app';
 import { getFirestore, doc, onSnapshot, runTransaction, Firestore } from 'firebase/firestore';
 
-// IMPORTANT: Replace this with your own Firebase project configuration!
+// IMPORTANT: Firebase configuration will be handled securely.
 // 1. Go to the Firebase console (https://console.firebase.google.com/).
-// 2. Create a new project.
+// 2. Create a new project or use an existing one.
 // 3. Go to Project Settings -> General tab.
 // 4. Under "Your apps", click the web icon (</>) to create a new web app.
 // 5. Copy the firebaseConfig object and paste it here.
 const firebaseConfig = {
-  apiKey: "AIzaSyB_mvjpTqySaATckpEo9hesJqKxNbZQ",
-  authDomain: "connect-4-8c79c.firebaseapp.com",
-  projectId: "connect-4-8c79c",
-  storageBucket: "connect-4-8c79c.firebasestorage.app",
-  messagingSenderId: "56332553259",
-  appId: "1:56332553259:web:cc001d3cf62a300f7e7ae",
-  measurementId: "G-TNcG7kL599"
+  apiKey: "YOUR_API_KEY",
+  authDomain: "YOUR_AUTH_DOMAIN",
+  projectId: "YOUR_PROJECT_ID",
+  storageBucket: "YOUR_STORAGE_BUCKET",
+  messagingSenderId: "YOUR_MESSAGING_SENDER_ID",
+  appId: "YOUR_APP_ID",
+  measurementId: "YOUR_MEASUREMENT_ID"
 };
 
 
@@ -127,6 +127,35 @@ const Circle: React.FC<CircleProps> = React.memo(({ value }) => {
 Circle.displayName = 'Circle';
 
 
+interface GridCellProps {
+  value: CellState;
+  colIndex: number;
+  isClickable: boolean;
+  onColumnClick: (colIndex: number) => void;
+}
+
+const GridCell: React.FC<GridCellProps> = React.memo(({ value, colIndex, isClickable, onColumnClick }) => {
+  const handleClick = useCallback(() => {
+    if (isClickable) {
+      onColumnClick(colIndex);
+    }
+  }, [isClickable, onColumnClick, colIndex]);
+
+  return (
+    <div 
+      className={`flex items-center justify-center rounded-full group ${isClickable ? 'cursor-pointer' : 'cursor-not-allowed'}`}
+      onClick={handleClick}
+      aria-label={`Drop token in column ${colIndex + 1}`}
+    >
+      <div className="group-hover:bg-gray-600/50 rounded-full p-1 transition-colors duration-200">
+          <Circle value={value} /> 
+      </div>
+    </div>
+  );
+});
+GridCell.displayName = 'GridCell';
+
+
 const App: React.FC = () => {
   const [gameState, setGameState] = useState<GameState>(createInitialGameState());
   const [connectionStatus, setConnectionStatus] = useState<'connecting' | 'live' | 'error'>('connecting');
@@ -209,7 +238,7 @@ const App: React.FC = () => {
     }
   }, [isUpdating, gameState.winner]);
 
-  const resetGame = async () => {
+  const resetGame = useCallback(async () => {
     if (!db || isUpdating) return;
     setIsUpdating(true);
     const gameDocRef = doc(db, 'games', 'connect4-live');
@@ -222,7 +251,7 @@ const App: React.FC = () => {
     } finally {
         setIsUpdating(false);
     }
-  };
+  }, [isUpdating]);
   
   const { board, currentPlayer, winner } = gameState;
 
@@ -266,7 +295,7 @@ const App: React.FC = () => {
                 Your Firebase project has not been configured.
             </p>
             <p className="text-gray-400 mb-6">
-                Please open the <code className="bg-gray-700 text-yellow-300 p-1 rounded mx-1">src/App.tsx</code> file and replace the placeholder values in the 
+                Please open the <code className="bg-gray-700 text-yellow-300 p-1 rounded mx-1">App.tsx</code> file and replace the placeholder values in the 
                 <code className="bg-gray-700 text-yellow-300 p-1 rounded mx-1">firebaseConfig</code> object with your actual project keys from the Firebase Console.
             </p>
             <p className="text-gray-500 text-sm">You need to create a project, add a Web App, and then copy the generated config object.</p>
@@ -292,16 +321,13 @@ const App: React.FC = () => {
           {Object.values(board).flat().map((value, index) => {
             const colIndex = index % COLS;
             return (
-              <div 
-                key={index} 
-                className={`flex items-center justify-center rounded-full group ${isUpdating || winner ? 'cursor-not-allowed' : 'cursor-pointer'}`}
-                onClick={() => handleColumnClick(colIndex)}
-                aria-label={`Drop token in column ${colIndex + 1}`}
-              >
-                <div className="group-hover:bg-gray-600/50 rounded-full p-1 transition-colors duration-200">
-                    <Circle value={value} /> 
-                </div>
-              </div>
+              <GridCell
+                key={index}
+                value={value}
+                colIndex={colIndex}
+                isClickable={!isUpdating && !winner}
+                onColumnClick={handleColumnClick}
+              />
             );
           })}
         </div>
