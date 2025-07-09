@@ -9,13 +9,13 @@ import { getFirestore, doc, onSnapshot, runTransaction, Firestore } from 'fireba
 // 4. Under "Your apps", click the web icon (</>) to create a new web app.
 // 5. Copy the firebaseConfig object and paste it here.
 const firebaseConfig = {
-  apiKey: "YOUR_API_KEY",
-  authDomain: "YOUR_AUTH_DOMAIN",
-  projectId: "YOUR_PROJECT_ID",
-  storageBucket: "YOUR_STORAGE_BUCKET",
-  messagingSenderId: "YOUR_MESSAGING_SENDER_ID",
-  appId: "YOUR_APP_ID",
-  measurementId: "YOUR_MEASUREMENT_ID"
+  apiKey: "AIzaSyB_mvjpTqySaATckpEo9hesJqKxNbZQ",
+  authDomain: "connect-4-8c79c.firebaseapp.com",
+  projectId: "connect-4-8c79c",
+  storageBucket: "connect-4-8c79c.firebasestorage.app",
+  messagingSenderId: "56332553259",
+  appId: "1:56332553259:web:cc001d3cf62a300f7e7ae",
+  measurementId: "G-TNcG7kL599"
 };
 
 
